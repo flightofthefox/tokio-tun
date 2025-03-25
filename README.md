@@ -49,6 +49,8 @@ async fn main() {
 sudo -E $(which cargo) run
 ```
 
+### Linux
+
 - Set the address of device (address and netmask could also be set using `TunBuilder`):
 
 ```bash
@@ -68,12 +70,36 @@ ip tuntap
 sudo tshark -i <tun-name>
 ```
 
+### macOS
+
+On macOS, the library uses the `utun` interface which is part of the macOS kernel. You need to have root privileges to create and use utun devices.
+
+- The name parameter for macOS should be in the format of `utun[0-9]+` (e.g., "utun0", "utun1") or empty to let the kernel assign the next available utun device.
+
+- Set the address of device (address and netmask could also be set using `TunBuilder`):
+
+```bash
+sudo ifconfig <utun-name> 10.0.0.1 10.1.0.1 netmask 255.255.255.0 up
+```
+
+- Ping to read packets:
+
+```bash
+ping -S 10.1.0.2 10.0.0.1
+```
+
+- Display devices:
+
+```bash
+ifconfig | grep utun
+```
+
 ## Supported Platforms
 
 - [x] Linux
+- [x] macOS (via utun interface)
 - [ ] FreeBSD
 - [ ] Android
-- [ ] OSX
 - [ ] iOS
 - [ ] Windows
 
@@ -81,8 +107,25 @@ sudo tshark -i <tun-name>
 
 - [`read`](examples/read.rs): Split tun to (reader, writer) pair and read packets from reader.
 - [`read-mq`](examples/read-mq.rs): Read from multi-queue tun using `tokio::select!`.
+- [`cross_platform`](examples/cross_platform.rs): Example showing cross-platform usage on both Linux and macOS.
 
 ```bash
 sudo -E $(which cargo) run --example read
 sudo -E $(which cargo) run --example read-mq
+sudo -E $(which cargo) run --example cross_platform
 ```
+
+## Platform-specific Notes
+
+### macOS
+
+The macOS implementation uses the `utun` interface which has a few differences from the Linux TUN/TAP implementation:
+
+1. macOS adds a 4-byte header to each packet (2 bytes for address family)
+2. Multi-queue is not supported on macOS
+3. TAP mode simulates Ethernet frames but behaves differently than Linux TAP devices
+4. The utun interfaces in macOS are point-to-point interfaces, so broadcast addresses behave differently. The library has been adapted to handle this difference transparently.
+
+### Linux
+
+Linux supports both TUN and TAP devices with full feature set including multi-queue support.

@@ -7,6 +7,15 @@ mod linux {
     pub mod request;
 }
 
+#[cfg(target_os = "macos")]
+mod macos {
+    pub mod address;
+    pub mod interface;
+    pub mod io;
+    pub mod params;
+    pub mod request;
+}
+
 mod builder;
 mod result;
 mod tun;

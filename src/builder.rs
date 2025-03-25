@@ -1,11 +1,26 @@
 use crate::Result;
 #[cfg(target_os = "linux")]
 use crate::linux::params::Params;
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+use crate::macos::params::Params;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::tun::Tun;
 use core::convert::From;
-use libc::{IFF_NO_PI, IFF_TAP, IFF_TUN};
 use std::net::Ipv4Addr;
+
+// Define the constants for macOS since they're not available in libc for macOS
+#[cfg(target_os = "macos")]
+mod constants {
+    pub const IFF_TUN: i32 = 0x1;
+    pub const IFF_TAP: i32 = 0x2;
+    pub const IFF_NO_PI: i32 = 0x1000;
+}
+
+#[cfg(target_os = "linux")]
+use libc::{IFF_NO_PI, IFF_TAP, IFF_TUN};
+
+#[cfg(target_os = "macos")]
+use constants::{IFF_NO_PI, IFF_TAP, IFF_TUN};
 
 /// Represents a factory to build new instances of [`Tun`](struct.Tun.html).
 pub struct TunBuilder {
@@ -175,6 +190,7 @@ impl TunBuilder {
     }
 
     /// Builds a new instance of [`Tun`](struct.Tun.html).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn build(self) -> Result<Vec<Tun>> {
         match self.queues {
             Some(queues) if queues > 1 => Tun::new_mq(self.into(), queues),
@@ -211,8 +227,35 @@ impl From<TunBuilder> for Params {
         }
     }
 
-    #[cfg(not(any(target_os = "linux")))]
+    #[cfg(target_os = "macos")]
     fn from(builder: TunBuilder) -> Self {
+        Params {
+            name: if builder.name.is_empty() {
+                None
+            } else {
+                Some(builder.name)
+            },
+            flags: {
+                let mut flags = if builder.is_tap { IFF_TAP } else { IFF_TUN } as _;
+                if !builder.packet_info {
+                    flags |= IFF_NO_PI as i16;
+                }
+                flags
+            },
+            persist: builder.persist,
+            up: builder.up,
+            mtu: builder.mtu,
+            owner: builder.owner,
+            group: builder.group,
+            address: builder.address,
+            destination: builder.destination,
+            broadcast: builder.broadcast,
+            netmask: builder.netmask,
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    fn from(_builder: TunBuilder) -> Self {
         unimplemented!()
     }
 }

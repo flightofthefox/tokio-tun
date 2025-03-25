@@ -1,11 +1,21 @@
 use crate::Result;
 use crate::TunBuilder;
+#[cfg(target_os = "linux")]
 use crate::linux::interface::Interface;
+#[cfg(target_os = "linux")]
 use crate::linux::io::TunIo;
+#[cfg(target_os = "linux")]
 use crate::linux::params::Params;
+#[cfg(target_os = "macos")]
+use crate::macos::interface::Interface;
+#[cfg(target_os = "macos")]
+use crate::macos::io::TunIo;
+#[cfg(target_os = "macos")]
+use crate::macos::params::Params;
 use std::io::{self, ErrorKind, IoSlice, Read, Write};
 use std::mem;
 use std::net::Ipv4Addr;
+#[cfg(target_os = "linux")]
 use std::os::raw::c_char;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::pin::Pin;
@@ -14,6 +24,7 @@ use std::task::{self, Context, Poll};
 use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+#[cfg(target_os = "linux")]
 static TUN: &[u8] = b"/dev/net/tun\0";
 
 // Taken from the `futures` crate
@@ -143,6 +154,7 @@ impl Tun {
         Ok(tuns)
     }
 
+    #[cfg(target_os = "linux")]
     fn allocate(params: Params, queues: usize) -> Result<Interface> {
         let fds = (0..queues)
             .map(|_| unsafe {
@@ -163,6 +175,63 @@ impl Tun {
         )?;
         iface.init(params)?;
         Ok(iface)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn allocate(params: Params, queues: usize) -> Result<Interface> {
+        // In macOS, we use the utun interface
+        let mut fds = Vec::with_capacity(queues);
+        let specified_unit = if let Some(name) = &params.name {
+            // Check if name is in utun format
+            if name.starts_with("utun") {
+                name[4..].parse::<i32>().ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // If a specific utun name was requested, try to open it
+        if let Some(unit) = specified_unit {
+            let (fd, name) = Interface::open_utun(unit)?;
+            fds.push(fd);
+
+            // Create Interface instance
+            let iface = Interface::new(fds, &name, params.flags)?;
+            iface.init(params)?;
+            return Ok(iface);
+        } else {
+            // Otherwise, try to open the next available utun device
+            for i in 0..16 {
+                // Try to open utun devices from 0 to 15
+                match Interface::open_utun(i) {
+                    Ok((fd, name)) => {
+                        fds.push(fd);
+
+                        // Set fd to non-blocking mode
+                        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                        if flags < 0 {
+                            return Err(io::Error::last_os_error().into());
+                        }
+
+                        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+                            return Err(io::Error::last_os_error().into());
+                        }
+
+                        // Create Interface instance
+                        let iface = Interface::new(fds, &name, params.flags)?;
+                        iface.init(params)?;
+                        return Ok(iface);
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            return Err(
+                io::Error::new(io::ErrorKind::NotFound, "No available utun device found").into(),
+            );
+        }
     }
 
     /// Receives a packet from the Tun/Tap interface.
